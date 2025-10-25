@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bike Theft Heatmap</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        #map { height: 600px; width: 100%; }
+        #input-form {
+            padding: 10px;
+            background: #f2f2f2;
+            margin-bottom: 10px;
+        }
+        #input-form form {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f0f0;
+        }
+        .header {
+            background-color: #333;
+            color: white;
+            padding: 15px;
+            text-align: center;
+        }
+        .container {
+            padding: 15px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Bike Theft Heatmap</h1>
+</div>
+
+<div class="container">
+    <div id="input-form">
+        <h3>Add a New Data Point</h3>
+        <form id="data-form">
+            <label for="lat">Latitude:</label>
+            <input type="text" id="lat" name="lat" required>
+            <label for="lng">Longitude:</label>
+            <input type="text" id="lng" name="lng" required>
+            <label for="intensity">Intensity:</label>
+            <input type="text" id="intensity" name="intensity" value="1.0" required>
+            <button type="submit">Add Point</button>
+        </form>
+    </div>
+
+    <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+<script>
+// Inside the bottom <script> tag
+
+// 1. Initialize the map (already done)
+const map = L.map('map').setView([37.7749, -122.4194], 13); // Centered on San Francisco
+
+// 2. Add a base tile layer (already done)
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+// 3. DEFINE YOUR DATA POINTS HERE <<<<<<<<<<<<<<<<<<<<<
+const stolenBikePoints = [
+    [37.7749, -122.4194, 0.5],
+    [37.7750, -122.4190, 1.0],
+    [37.7755, -122.4185, 0.8],
+    [37.7760, -122.4180, 1.0],
+    [37.7765, -122.4175, 0.7],
+    [37.7800, -122.4100, 1.0],
+    [37.7805, -122.4105, 1.0],
+    [37.7810, -122.4110, 0.9]
+];
+
+// 4. Create and add the heatmap layer using the data defined above
+const heatLayer = L.heatLayer(stolenBikePoints, {
+    radius: 25,
+    blur: 15,
+    maxZoom: 18,
+    gradient: {
+        0.4: 'blue',
+        0.6: 'cyan',
+        0.7: 'lime',
+        0.8: 'yellow',
+        1.0: 'red'
+    }
+}).addTo(map);
+
+// 5. Add individual markers for each data point
+stolenBikePoints.forEach(function(point) {
+    const lat = point[0];
+    const lng = point[1];
+    L.circleMarker([lat, lng], {
+        radius: 8, // Increased radius for better visibility
+        color: 'black',
+        weight: 1,
+        fillColor: 'white',
+        fillOpacity: 0.8
+    }).bindPopup(`Lat: ${lat}, Lng: ${lng}`).addTo(map);
+});
+
+// 6. Handle form submission to add new data points
+document.getElementById('data-form').addEventListener('submit', function(event) {
+    event.preventDefault();
+
+    const lat = parseFloat(document.getElementById('lat').value);
+    const lng = parseFloat(document.getElementById('lng').value);
+    const intensity = parseFloat(document.getElementById('intensity').value);
+
+    if (!isNaN(lat) && !isNaN(lng) && !isNaN(intensity)) {
+        const newPoint = [lat, lng, intensity];
+        stolenBikePoints.push(newPoint);
+
+        // Update the heatmap layer
+        heatLayer.addLatLng(newPoint);
+
+        // Add a circle marker for the new point
+        L.circleMarker([lat, lng], {
+            radius: 8,
+            color: 'black',
+            weight: 1,
+            fillColor: 'white',
+            fillOpacity: 0.8
+        }).bindPopup(`Lat: ${lat}, Lng: ${lng}`).addTo(map);
+
+        // Clear the form fields
+        document.getElementById('data-form').reset();
+    } else {
+        alert('Please enter valid numbers for latitude, longitude, and intensity.');
+    }
+});
+</script>
+
+</body>
+</html>
