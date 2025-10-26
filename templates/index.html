@@ -1,0 +1,83 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Suitcase Watch — Live & Heatmap</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    body { margin: 0; display: flex; height: 100vh; font-family: Arial, sans-serif; }
+    #left { width: 40%; padding: 8px; box-sizing: border-box; background:#f7f7f7; }
+    #right { flex:1; }
+    #video { width:100%; border:1px solid #ccc; }
+    #map { height: calc(100vh - 40px); width: 100%; }
+    .panel-title { font-weight:600; margin-bottom:6px; }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <div class="panel-title">Live feed</div>
+    <img id="video" src="/video_feed" alt="live feed" />
+    <div style="margin-top:8px;">
+      <button id="refresh">Refresh events</button>
+      <div id="status" style="margin-top:6px;font-size:0.9em;color:#444;"></div>
+    </div>
+  </div>
+
+  <div id="right">
+    <div class="panel-title" style="padding:8px">Theft heatmap (real time)</div>
+    <div id="map"></div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+  <script>
+    const socket = io();
+    const statusEl = document.getElementById('status');
+
+    // create map centered roughly
+    const map = L.map('map').setView([30.2861, -97.7394], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // heat layer
+    const heatLayer = L.heatLayer([], {radius: 25, blur: 18, maxZoom: 17}).addTo(map);
+
+    function addHeatPoint(lat, lon) {
+      heatLayer.addLatLng([lat, lon, 0.6]); // with intensity
+    }
+
+    // fetch historical events
+    async function loadEvents(){
+      statusEl.textContent = "Loading events...";
+      try {
+        const resp = await fetch('/events');
+        const data = await resp.json();
+        data.forEach(it => {
+          const lat = parseFloat(it.lat);
+          const lon = parseFloat(it.lon);
+          addHeatPoint(lat, lon);
+        });
+        statusEl.textContent = `Loaded ${data.length} events`;
+      } catch (e) {
+        statusEl.textContent = "Failed to load events";
+        console.error(e);
+      }
+    }
+
+    // handle real-time events from server
+    socket.on('new_theft', function(payload){
+      statusEl.textContent = `New theft reported at ${new Date(payload.timestamp*1000).toLocaleString()}`;
+      addHeatPoint(parseFloat(payload.lat), parseFloat(payload.lon));
+    });
+
+    document.getElementById('refresh').addEventListener('click', loadEvents);
+
+    // initial load
+    loadEvents();
+  </script>
+</body>
+</html>
