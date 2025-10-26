@@ -42,7 +42,7 @@ EMAIL_TO = os.getenv("EMAIL_TO", "bhadauriya@ucdavis.edu")
 # Claude (Anthropic) optional config
 # Example Anthropic endpoint (may differ): https://api.anthropic.com/v1/complete
 CLAUDE_API_URL = os.getenv("CLAUDE_API_URL", "https://api.anthropic.com/v1/complete")
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "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")  # bearer token
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")  # bearer token
 
 # LiveKit optional config (if you run a LiveKit instance, put join/info link here)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")  # e.g. https://your-livekit-server/room/abc?token=...
