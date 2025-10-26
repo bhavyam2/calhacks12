@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WATCHDOG - Custom Feed</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #1d1f20;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    h1 {
+      color: #80e0ff;
+      text-shadow: 0 0 15px #80e0ff;
+    }
+    video, img {
+      width: 50%;
+      border-radius: 15px;
+      margin-top: 20px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.6);
+    }
+    input, button {
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      margin: 5px;
+      font-size: 1rem;
+    }
+    input {
+      width: 300px;
+    }
+    button {
+      background: #8055ff;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #a070ff;
+    }
+    #statusBox {
+      margin-top: 20px;
+      padding: 10px 20px;
+      background: rgba(0,0,0,0.7);
+      border-radius: 10px;
+      font-size: 1.3rem;
+      color: #9e9e9e;
+    }
+  </style>
+</head>
+<body>
+  <h1>WATCHDOG - Custom Camera</h1>
+
+  <div>
+    <input type="text" id="streamUrl" placeholder="Enter RTSP or HTTP stream URL">
+    <button id="setStreamBtn">Set Stream</button>
+  </div>
+
+  <img id="customFeed" src="" alt="Camera Feed" style="display:none;">
+  <div id="statusBox">Waiting for stream...</div>
+
+  <div>
+    <button id="armBtn">Arm System</button>
+    <button id="disarmBtn">Disarm System</button>
+  </div>
+
+  <script>
+    document.getElementById('setStreamBtn').addEventListener('click', async () => {
+      const url = document.getElementById('streamUrl').value;
+      if (!url) {
+        alert("Please enter a stream URL.");
+        return;
+      }
+      const res = await fetch('/set_stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        document.getElementById('customFeed').src = '/custom_feed';
+        document.getElementById('customFeed').style.display = 'block';
+        document.getElementById('statusBox').textContent = "Connecting...";
+      } else {
+        alert(data.error || "Failed to set stream.");
+      }
+    });
+
+    async function updateStatus() {
+      const res = await fetch('/status');
+      const data = await res.json();
+      document.getElementById('statusBox').textContent = data.status;
+    }
+
+    setInterval(updateStatus, 1000);
+
+    document.getElementById('armBtn').addEventListener('click', async () => {
+      await fetch('/arm', { method: 'POST' });
+      updateStatus();
+    });
+
+    document.getElementById('disarmBtn').addEventListener('click', async () => {
+      await fetch('/disarm', { method: 'POST' });
+      updateStatus();
+    });
+  </script>
+</body>
+</html>

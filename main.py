@@ -55,7 +55,7 @@ SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "http://localhost:8010")
 
 # ---------------- SSH CONFIG ----------------
 # Remote host to call when suitcase is stolen. Either password auth or key auth supported.
-REMOTE_HOST = os.getenv("REMOTE_HOST", "10.72.0.87")            # e.g. "192.168.1.100" or "remote.example.com"
+REMOTE_HOST = os.getenv("REMOTE_HOST", "10.42.0.1")            # e.g. "192.168.1.100" or "remote.example.com"
 REMOTE_PORT = int(os.getenv("REMOTE_PORT", "22"))
 REMOTE_USER = os.getenv("REMOTE_USER", "watchdog")            # e.g. "pi"
 REMOTE_PASSWORD = os.getenv("REMOTE_PASSWORD", "123456")    # optional, if using key auth leave blank
@@ -67,8 +67,9 @@ SSH_CONNECT_TIMEOUT = float(os.getenv("SSH_CONNECT_TIMEOUT", "10.0"))
 app = Flask(__name__)
 
 # single camera capture (AVFoundation for macOS); adjust if on other platform
-#camera = cv2.VideoCapture("http://10.72.0.87:8080/?action=stream")
-camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
+camera = cv2.VideoCapture("http://10.42.0.1:8080/?action=stream")
+#camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
+camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 camera.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 if not camera.isOpened():
