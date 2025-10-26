@@ -12,6 +12,9 @@ from flask import Flask, render_template, Response, jsonify, send_file
 import cv2
 from ultralytics import YOLO
 
+# New dependency for SSH:
+import paramiko
+
 # ---------------- CONFIG (env vars) ----------------
 MODEL_PATH = os.getenv("MODEL_PATH", "yolo11m.pt")
 CAPTURE_DIR = os.getenv("CAPTURE_DIR", "captures")
@@ -40,23 +43,32 @@ EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
 EMAIL_TO = os.getenv("EMAIL_TO", "bhadauriya@ucdavis.edu")
 
 # Claude (Anthropic) optional config
-# Example Anthropic endpoint (may differ): https://api.anthropic.com/v1/complete
-CLAUDE_API_URL = os.getenv("CLAUDE_API_URL", "https://api.anthropic.com/v1/complete")
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")  # bearer token
+CLAUDE_API_URL = os.getenv("CLAUDE_API_URL", "")
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "")
 
-# LiveKit optional config (if you run a LiveKit instance, put join/info link here)
-LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")  # e.g. https://your-livekit-server/room/abc?token=...
+# LiveKit optional config
+LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
 LIVEKIT_ENABLED = bool(LIVEKIT_URL)
 
 # Misc
-SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "http://localhost:8010")  # used to construct capture links in email
+SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "http://localhost:8010")
+
+# ---------------- SSH CONFIG ----------------
+# Remote host to call when suitcase is stolen. Either password auth or key auth supported.
+REMOTE_HOST = os.getenv("REMOTE_HOST", "10.72.0.87")            # e.g. "192.168.1.100" or "remote.example.com"
+REMOTE_PORT = int(os.getenv("REMOTE_PORT", "22"))
+REMOTE_USER = os.getenv("REMOTE_USER", "watchdog")            # e.g. "pi"
+REMOTE_PASSWORD = os.getenv("REMOTE_PASSWORD", "123456")    # optional, if using key auth leave blank
+REMOTE_KEY_PATH = os.getenv("REMOTE_KEY_PATH", "")    # optional path to private key, e.g. "/home/user/.ssh/id_rsa"
+REMOTE_COMMAND = os.getenv("REMOTE_COMMAND", "python3 /home/watchdog/buzzer_test.py")      # command to run remotely, e.g. "bash /home/pi/handle_theft.sh"
+SSH_CONNECT_TIMEOUT = float(os.getenv("SSH_CONNECT_TIMEOUT", "10.0"))
 
 # ---------------- Initialize app, camera, model ----------------
 app = Flask(__name__)
 
-# single camera capture (AVFoundation for macOS)
-camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
+# single camera capture (AVFoundation for macOS); adjust if on other platform
 #camera = cv2.VideoCapture("http://10.72.0.87:8080/?action=stream")
+camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_AVFOUNDATION)
 camera.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 if not camera.isOpened():
@@ -90,7 +102,7 @@ emailed_lock = threading.Lock()
 # ---------------- Helpers ----------------
 def update_status(new_status, frame_for_snapshot=None):
     """
-    Update status; on transition to '🔴 Stolen' save snapshot and send email.
+    Update status; on transition to '🔴 Stolen' save snapshot, send email, and optionally run remote SSH command.
     """
     global status, emailed_for_current_stolen
     with status_lock:
@@ -114,6 +126,12 @@ def update_status(new_status, frame_for_snapshot=None):
                                 fpath = save_stolen_snapshot(lf)
                         if EMAIL_ALERTS_ENABLED and fpath:
                             threading.Thread(target=send_stolen_email, args=(fpath,), daemon=True).start()
+
+                        # Run SSH command (non-blocking)
+                        if REMOTE_HOST and REMOTE_USER and REMOTE_COMMAND:
+                            threading.Thread(target=run_ssh_command, args=(REMOTE_HOST, REMOTE_PORT, REMOTE_USER, REMOTE_PASSWORD, REMOTE_KEY_PATH, REMOTE_COMMAND), daemon=True).start()
+                        else:
+                            print("[SSH] Remote SSH not executed: REMOTE_HOST/REMOTE_USER/REMOTE_COMMAND not configured.")
             # leaving stolen
             if old == "🔴 Stolen" and new_status in ("🟢 Moving", "🟡 Standing still"):
                 with emailed_lock:
@@ -205,14 +223,54 @@ def save_stolen_snapshot(frame_bgr):
         print("[SNAPSHOT] Failed to save stolen snapshot:", e)
         return None
 
+# ---------------- SSH Helper ----------------
+def run_ssh_command(host, port, user, password, key_path, command):
+    """
+    Connects to remote host via SSH and runs the provided command.
+    Uses password auth if password provided, otherwise attempts private key if key_path provided.
+    This runs in a background thread so it should not block.
+    """
+    try:
+        print(f"[SSH] Connecting to {user}@{host}:{port} (timeout={SSH_CONNECT_TIMEOUT}s)...")
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        connect_kwargs = {
+            "hostname": host,
+            "port": port,
+            "username": user,
+            "timeout": SSH_CONNECT_TIMEOUT,
+            "banner_timeout": SSH_CONNECT_TIMEOUT,
+            "auth_timeout": SSH_CONNECT_TIMEOUT,
+        }
+        if password:
+            connect_kwargs["password"] = password
+        elif key_path:
+            connect_kwargs["key_filename"] = key_path
+        else:
+            # attempt to use default ssh agent / keys if present
+            connect_kwargs["allow_agent"] = True
+            connect_kwargs["look_for_keys"] = True
+
+        ssh.connect(**connect_kwargs)
+        print(f"[SSH] Connected. Executing remote command: {command}")
+        stdin, stdout, stderr = ssh.exec_command(command, timeout=SSH_CONNECT_TIMEOUT)
+
+        # Optionally wait for command to finish and capture output
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        if out:
+            print("[SSH][out]", out.strip())
+        if err:
+            print("[SSH][err]", err.strip())
+
+        # close connection
+        ssh.close()
+        print("[SSH] Remote command finished and connection closed.")
+    except Exception as e:
+        print(f"[SSH] Error while running remote command: {e}")
+
 # ---------------- Claude integration ----------------
 def generate_incident_report_with_claude(snapshot_path=None, status_text=None):
-    """
-    Generate a short incident report using Claude (if configured).
-    If CLAUDE_API_URL and CLAUDE_API_KEY are not provided, fallback to a basic template.
-    Expected behavior: returns a string (short human-readable summary).
-    """
-    # Basic fallback template
     fallback = f"Suitcase theft alert detected. Status: {status_text or '🔴 Stolen'}."
     if snapshot_path:
         fallback += f" Snapshot saved at: {snapshot_path}"
@@ -221,7 +279,6 @@ def generate_incident_report_with_claude(snapshot_path=None, status_text=None):
         print("[CLAUDE] Not configured; using fallback report.")
         return fallback
 
-    # Build a prompt — keep it concise for predictable responses
     prompt = (
         "You are an incident report assistant. Generate a short, factual incident report (3-6 sentences) "
         "for a suitcase security system. Include time (UTC), status, and suggested next steps for the owner. "
@@ -231,24 +288,18 @@ def generate_incident_report_with_claude(snapshot_path=None, status_text=None):
     try:
         headers = {"Authorization": f"Bearer {CLAUDE_API_KEY}", "Content-Type": "application/json"}
         payload = {
-            # For flexibility we accept the user-provided CLAUDE_API_URL; different deployments use different bodies.
             "prompt": prompt,
             "max_tokens_to_sample": 300
         }
-        # Try POST request
         r = requests.post(CLAUDE_API_URL, json=payload, headers=headers, timeout=15)
         r.raise_for_status()
         data = r.json()
-        # Best-effort to find text field (different Claude APIs differ)
-        # Try common keys:
         text = None
         for key in ("completion", "text", "message", "response", "output"):
             if isinstance(data.get(key), str):
                 text = data.get(key)
                 break
-        # Some Anthropic endpoints return {"completion": "..."} or {"text": "..."}
         if not text:
-            # try nested shapes
             if "completion" in data:
                 text = data["completion"]
             elif "choices" in data and isinstance(data["choices"], list) and "text" in data["choices"][0]:
@@ -269,12 +320,11 @@ def send_stolen_email(image_path):
     if not SMTP_SERVER or not SMTP_USER or not SMTP_PASSWORD or not EMAIL_TO:
         print("[EMAIL] SMTP not configured correctly; skipping send.")
         return
-    # generate incident report via Claude (or fallback)
+
     with status_lock:
         st = status
     report_text = generate_incident_report_with_claude(snapshot_path=image_path, status_text=st)
 
-    # build message
     msg = EmailMessage()
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     msg["Subject"] = f"[ALERT] Suitcase possibly stolen — {ts}"
@@ -289,11 +339,9 @@ def send_stolen_email(image_path):
     ]
     if LIVEKIT_ENABLED:
         body_lines.extend(["Live view link:", LIVEKIT_URL, ""])
-    # list kept captures link
     body_lines.append(f"View server captures: {SERVER_BASE_URL}/captures")
     msg.set_content("\n".join(body_lines))
 
-    # attach image
     try:
         with open(image_path, "rb") as f:
             img_data = f.read()
@@ -301,7 +349,6 @@ def send_stolen_email(image_path):
     except Exception as e:
         print("[EMAIL] Failed to attach image:", e)
 
-    # send via SMTP (SSL or STARTTLS depending on port)
     try:
         if SMTP_PORT == 465:
             context = ssl.create_default_context()
@@ -309,7 +356,6 @@ def send_stolen_email(image_path):
                 server.login(SMTP_USER, SMTP_PASSWORD)
                 server.send_message(msg)
         else:
-            # STARTTLS
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as server:
                 server.ehlo()
                 server.starttls(context=ssl.create_default_context())
@@ -344,7 +390,6 @@ def detection_thread():
             time.sleep(0.02)
             continue
 
-        # safe inference
         try:
             results = model(frame, imgsz=320, conf=0.45, verbose=False)
         except Exception as e:
@@ -396,7 +441,6 @@ def detection_thread():
                     update_status("🟡 Standing still")
             last_suitcase_center = (cx, cy)
             missing_frames = 0
-            # reset emailed flag if previously stolen and now back
         else:
             missing_frames += 1
             if missing_frames > MISSING_FRAMES_LIMIT:
@@ -456,7 +500,6 @@ def get_status():
 
 @app.route("/captures")
 def list_captures():
-    """List kept captures for download (kept_due_to_stolen==True)."""
     out = []
     with person_photos_lock:
         for fname, meta in person_photos.items():
@@ -466,7 +509,6 @@ def list_captures():
                     "path": f"/captures/download/{fname}",
                     "timestamp": meta.get("timestamp")
                 })
-    # Also include stolen snapshots in folder
     stolen_files = [f for f in os.listdir(CAPTURE_DIR) if f.startswith("stolen_")]
     for f in stolen_files:
         out.append({
